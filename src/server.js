@@ -2,11 +2,17 @@ const express = require("express");
 require("dotenv").config();
 const pool = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
+const userprofileroutes=require("./routes/user_profileRoutes")
 
 const app = express();
 app.use(express.json());
+const cookieParser = require("cookie-parser");
+app.use(cookieParser());
+const { apiLimiter } = require("./middleware/rateLimiter");
+app.use("/api", apiLimiter);
 
 app.use("/api/auth", authRoutes);
+app.use("/api/users",userprofileroutes)
 
 
 
