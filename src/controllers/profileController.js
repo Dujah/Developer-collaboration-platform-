@@ -1,19 +1,6 @@
 const pool = require("../config/db");
 const asyncHandler = require("../utils/asyncHandler");
 
-const viewprofile=asyncHandler(async(req,res)=>{
-    const username=req.params.username;
-    const [rows]=await pool.query(
-        "select username,name,bio,github_username from users where username=?",
-        [username]
-    )
-    const user=rows[0]
-    if(!user){
-        return res.status(404).json({message:"user not found"})
-    }
-    return res.status(200).json({user})
-
-});
 
 const edictprofile=async(req,res)=>{
     let {name, bio, github_username}=req.body;
@@ -70,5 +57,87 @@ const setClause = fields.map((field) => `${field} = ?`).join(", ");
 
 }
 
+const addSkill = asyncHandler(async (req, res) => {
+  const { name } = req.body;
 
-module.exports={viewprofile,edictprofile}
+  // 1. Validate and normalize
+  if (typeof name !== "string" || name.trim() === "") {
+    return res.status(400).json({ message: "Skill name is required" });
+  }
+  const skillName = name.trim().toLowerCase();
+  if (skillName.length > 50) {
+    return res.status(400).json({ message: "Skill name must be at most 50 characters" });
+  }
+
+  // 2. Create the skill only if it doesn't already exist
+  await pool.query("INSERT IGNORE INTO skills (name) VALUES (?)", [skillName]);
+
+  // 3. Get its id (whether just created or already there)
+  const [rows] = await pool.query("SELECT id FROM skills WHERE name = ?", [skillName]);
+  const skillId = rows[0].id;
+
+  // 4. Link it to the user
+  const [result] = await pool.query(
+    "INSERT IGNORE INTO user_skills (user_id, skill_id) VALUES (?, ?)",
+    [req.user.id, skillId]
+  );
+
+  if (result.affectedRows === 0) {
+    return res.status(409).json({ message: "You already have this skill" });
+  }
+
+  res.status(201).json({ message: "Skill added", skill: { id: skillId, name: skillName } });
+});
+
+const removeSkill = asyncHandler(async (req, res) => {
+  const skillId = req.params.skillId;
+  const userId = req.user.id;
+
+  const [result] = await pool.query(
+    "DELETE FROM user_skills WHERE user_id = ? AND skill_id = ?",
+    [userId, skillId]
+  );
+
+  if (result.affectedRows === 0) {
+    return res.status(404).json({ message: "You don't have this skill" });
+  }
+
+  res.status(204).send();
+});
+
+const viewProfile = asyncHandler(async (req, res) => {
+  const username = req.params.username;
+
+  // 1. Get the user (id is needed for the skills query)
+  const [rows] = await pool.query(
+    "SELECT id, username, name, bio, github_username, created_at FROM users WHERE username = ?",
+    [username]
+  );
+
+  const user = rows[0];
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  // 2. Get their skills (only runs if the user exists)
+  const [skillRows] = await pool.query(
+    `SELECT s.name
+     FROM user_skills us
+     JOIN skills s ON s.id = us.skill_id
+     WHERE us.user_id = ?
+     ORDER BY s.name`,
+    [user.id]
+  );
+
+  // 3. Build the response
+  const { id, ...profile } = user;
+
+  res.json({
+    user: {
+      ...profile,
+      skills: skillRows.map((row) => row.name),
+    },
+  });
+});
+
+module.exports={edictprofile,addSkill,removeSkill,viewProfile}
